@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoCode WebSocket Test Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .connection-panel {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.connected { background-color: #d4edda; color: #155724; }
+        .status.disconnected { background-color: #f8d7da; color: #721c24; }
+        .status.connecting { background-color: #fff3cd; color: #856404; }
+        
+        input, textarea, button {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        .message-log {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #f8f9fa;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #007bff;
+            background: white;
+        }
+        .message.sent { border-left-color: #28a745; }
+        .message.received { border-left-color: #17a2b8; }
+        .message.error { border-left-color: #dc3545; }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .collaboration-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 CoCode WebSocket Test Client</h1>
+        
+        <div class="connection-panel">
+            <h3>Connection Settings</h3>
+            <div>
+                <label>Project ID:</label>
+                <input type="text" id="projectId" value="project-123" placeholder="Enter project ID">
+            </div>
+            <div>
+                <label>User Token:</label>
+                <input type="text" id="userToken" value="" placeholder="JWT token (get from login API)">
+            </div>
+            <div>
+                <label>WebSocket URL:</label>
+                <input type="text" id="wsUrl" value="ws://localhost:8080/ws/collaborate/" readonly style="width: 400px;">
+            </div>
+            <div>
+                <button id="connectBtn" onclick="connect()">Connect</button>
+                <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            </div>
+            <div id="connectionStatus" class="status disconnected">Disconnected</div>
+        </div>
+
+        <div class="grid">
+            <div>
+                <h3>Quick Actions</h3>
+                <div class="collaboration-actions">
+                    <button onclick="sendCursorMove()">Send Cursor Move</button>
+                    <button onclick="sendTextChange()">Send Text Change</button>
+                    <button onclick="sendSelection()">Send Selection</button>
+                    <button onclick="sendTyping()">Send Typing</button>
+                    <button onclick="sendPing()">Send Ping</button>
+                </div>
+                
+                <h3>Custom Message</h3>
+                <textarea id="customMessage" rows="4" cols="50" placeholder='{"type": "cursor_move", "fileId": "file1", "line": 10, "column": 5}'></textarea>
+                <br>
+                <button onclick="sendCustomMessage()">Send Custom Message</button>
+            </div>
+            
+            <div>
+                <h3>Connection Info</h3>
+                <div id="connectionInfo">
+                    <p><strong>Connected Users:</strong> <span id="userCount">0</span></p>
+                    <p><strong>Messages Sent:</strong> <span id="sentCount">0</span></p>
+                    <p><strong>Messages Received:</strong> <span id="receivedCount">0</span></p>
+                    <p><strong>Last Activity:</strong> <span id="lastActivity">Never</span></p>
+                </div>
+            </div>
+        </div>
+
+        <h3>Message Log</h3>
+        <div id="messageLog" class="message-log"></div>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <script>
+        let ws = null;
+        let sentCount = 0;
+        let receivedCount = 0;
+
+        function updateConnectionStatus(status, message) {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.className = `status ${status}`;
+            statusEl.textContent = message;
+        }
+
+        function updateLastActivity() {
+            document.getElementById('lastActivity').textContent = new Date().toLocaleTimeString();
+        }
+
+        function logMessage(type, data, direction = 'received') {
+            const log = document.getElementById('messageLog');
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${direction}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            
+            messageEl.innerHTML = `
+                <strong>[${timestamp}] ${direction.toUpperCase()}</strong><br>
+                <pre>${content}</pre>
+            `;
+            
+            log.appendChild(messageEl);
+            log.scrollTop = log.scrollHeight;
+            updateLastActivity();
+        }
+
+        function connect() {
+            const projectId = document.getElementById('projectId').value;
+            const token = document.getElementById('userToken').value;
+            
+            if (!projectId || !token) {
+                alert('Please enter both Project ID and User Token');
+                return;
+            }
+
+            const wsUrl = `ws://localhost:8080/ws/collaborate/${projectId}?token=${token}`;
+            document.getElementById('wsUrl').value = wsUrl;
+
+            updateConnectionStatus('connecting', 'Connecting...');
+            
+            try {
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = function(event) {
+                    updateConnectionStatus('connected', `Connected to project: ${projectId}`);
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                    logMessage('connection', 'WebSocket connection established', 'sent');
+                };
+                
+                ws.onmessage = function(event) {
+                    receivedCount++;
+                    document.getElementById('receivedCount').textContent = receivedCount;
+                    
+                    try {
+                        const data = JSON.parse(event.data);
+                        logMessage('message', data, 'received');
+                        
+                        // Handle specific message types
+                        if (data.type === 'user_joined') {
+                            logMessage('event', `User ${data.userId} joined the project`, 'received');
+                        } else if (data.type === 'user_left') {
+                            logMessage('event', `User ${data.userId} left the project`, 'received');
+                        }
+                    } catch (e) {
+                        logMessage('message', event.data, 'received');
+                    }
+                };
+                
+                ws.onclose = function(event) {
+                    updateConnectionStatus('disconnected', 'Disconnected');
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = true;
+                    logMessage('connection', `Connection closed: ${event.code} ${event.reason}`, 'error');
+                };
+                
+                ws.onerror = function(error) {
+                    updateConnectionStatus('disconnected', 'Connection Error');
+                    logMessage('error', `WebSocket error: ${error}`, 'error');
+                };
+                
+            } catch (error) {
+                updateConnectionStatus('disconnected', 'Failed to connect');
+                logMessage('error', `Connection failed: ${error}`, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function sendMessage(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const messageStr = JSON.stringify(message);
+                ws.send(messageStr);
+                sentCount++;
+                document.getElementById('sentCount').textContent = sentCount;
+                logMessage('message', message, 'sent');
+                return true;
+            } else {
+                logMessage('error', 'WebSocket is not connected', 'error');
+                return false;
+            }
+        }
+
+        function sendCursorMove() {
+            sendMessage({
+                type: 'cursor_move',
+                fileId: 'main.js',
+                line: Math.floor(Math.random() * 100),
+                column: Math.floor(Math.random() * 80)
+            });
+        }
+
+        function sendTextChange() {
+            sendMessage({
+                type: 'text_change',
+                fileId: 'main.js',
+                operation: 'insert',
+                position: Math.floor(Math.random() * 1000),
+                content: 'Hello, World!',
+                length: 13
+            });
+        }
+
+        function sendSelection() {
+            sendMessage({
+                type: 'selection_change',
+                fileId: 'main.js',
+                startLine: 5,
+                startColumn: 0,
+                endLine: 7,
+                endColumn: 20
+            });
+        }
+
+        function sendTyping() {
+            sendMessage({
+                type: 'user_typing',
+                fileId: 'main.js',
+                isTyping: true
+            });
+        }
+
+        function sendPing() {
+            sendMessage({
+                type: 'ping',
+                timestamp: Date.now()
+            });
+        }
+
+        function sendCustomMessage() {
+            const customText = document.getElementById('customMessage').value;
+            if (!customText.trim()) {
+                alert('Please enter a custom message');
+                return;
+            }
+            
+            try {
+                const message = JSON.parse(customText);
+                sendMessage(message);
+            } catch (e) {
+                logMessage('error', `Invalid JSON: ${e.message}`, 'error');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('messageLog').innerHTML = '';
+            sentCount = 0;
+            receivedCount = 0;
+            document.getElementById('sentCount').textContent = '0';
+            document.getElementById('receivedCount').textContent = '0';
+        }
+
+        // Update project ID in URL when input changes
+        document.getElementById('projectId').addEventListener('input', function() {
+            const projectId = this.value;
+            document.getElementById('wsUrl').value = `ws://localhost:8080/ws/collaborate/${projectId}`;
+        });
+
+        // Auto-fill some sample data for testing
+        window.addEventListener('load', function() {
+            // Set sample custom message
+            document.getElementById('customMessage').value = JSON.stringify({
+                type: 'text_change',
+                fileId: 'example.js',
+                operation: 'insert',
+                position: 42,
+                content: 'console.log("Hello from CoCode!");'
+            }, null, 2);
+        });
+    </script>
+</body>
+</html>

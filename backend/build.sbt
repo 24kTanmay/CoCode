@@ -11,6 +11,7 @@ lazy val root = (project in file("."))
       "com.typesafe.akka" %% "akka-http-spray-json" % "10.5.0",
       "com.typesafe.akka" %% "akka-actor-typed" % "2.8.0",
       "com.typesafe.akka" %% "akka-stream" % "2.8.0",
+      "com.typesafe.akka" %% "akka-actor" % "2.8.0",
       
       // Database connectivity
       "org.mongodb.scala" %% "mongo-scala-driver" % "4.9.0",
